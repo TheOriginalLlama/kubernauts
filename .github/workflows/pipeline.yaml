@@ -1,0 +1,61 @@
+name: pipeline
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  # 1. Check the code and prove it works on a throwaway cluster built from clusters/staging.yaml
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validate manifests
+        run: |
+          for env in staging prod; do
+            echo "==> $env"
+            kubectl kustomize k8s/overlays/$env | kubeconform -strict -summary
+          done
+
+      - name: Create ephemeral staging cluster
+        uses: helm/kind-action@v1
+        with:
+          config: clusters/staging.yaml
+          cluster_name: kubernauts-staging
+
+      - name: Apply staging overlay
+        run: kubectl apply -k k8s/overlays/staging
+
+      - name: Smoke test
+        run: scripts/smoke-test.sh kind-kubernauts-staging
+
+  # 2. Promote the exact commit that passed to production
+  deploy-prod:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, windows]
+    environment: production
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure prod cluster exists
+        run: scripts/create-cluster.sh clusters/prod.yaml
+
+      - name: Show diff
+        run: kubectl --context kind-kubernauts-prod diff -k k8s/overlays/prod || true
+
+      - name: Apply prod overlay
+        run: kubectl --context kind-kubernauts-prod apply -k k8s/overlays/prod
+
+      - name: Smoke test prod
+        run: scripts/smoke-test.sh kind-kubernauts-prod

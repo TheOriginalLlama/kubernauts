@@ -1,0 +1,12 @@
+# Production cluster definition. Lives on the self-hosted runner's machine.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: kubernauts-prod
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8083
+        protocol: TCP
+  - role: worker
+  - role: worker
