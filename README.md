@@ -2,6 +2,22 @@
 
 A small, end-to-end Kubernetes delivery pipeline. The cluster is defined in YAML, every change is tested automatically on a throwaway cluster, and a tested commit can be promoted to a production cluster.
 
+## Tech Stack:
+
+- **Kubernetes:** the platform being delivered to. It is the standard container orchestrator and the skill this project is meant to practise.
+- **kind (Kubernetes in Docker):** runs real multi-node clusters as Docker containers. It is free, starts in about a minute, needs no cloud account, and builds the same cluster on my PC and in CI.
+- **Docker:** the container runtime kind runs on. Docker Desktop on my PC, and the Docker already installed on GitHub's runners.
+- **Kustomize (`kubectl apply -k`):** keeps one base set of manifests and layers small per-environment patches on top (for example, 1 replica in staging and 2 in prod). It is built into `kubectl`, so there is no templating language or extra tool to install, and it avoids copy-pasted YAML.
+- **kubectl:** applies manifests, shows diffs (`kubectl diff`), and waits for rollouts. It is the one client every Kubernetes cluster understands.
+- **podinfo:** a small, well-known sample web app with `/healthz` and `/readyz` endpoints. It gives the pipeline something real to deploy and probe without writing an app first.
+- **kubeconform:** validates manifests against the Kubernetes schemas in seconds, catching typos and wrong fields before a cluster is even built.
+- **GitHub Actions:** runs the pipeline next to the code, with no separate CI server to maintain. It is free for private repos within a monthly quota.
+- **GitHub-hosted Ubuntu runner:** a clean VM per run with Docker preinstalled, used for the `test` job so tests need none of my own hardware.
+- **`helm/kind-action`:** a maintained action that builds the kind cluster from `clusters/staging.yaml` in CI, so I do not hand-roll the setup.
+- **Self-hosted runner (Windows):** the only way a job can reach the prod cluster, since that cluster lives on my machine. It is documented but not installed in this showcase.
+- **Bash scripts (`scripts/`):** small, readable glue for creating clusters and smoke testing. They run the same way locally and in CI.
+- **Git and GitHub:** the source of truth. Every change is reviewed and tested as a commit, and the exact commit that passed `test` is the one that gets promoted.
+
 ## Repo layout
 
 ```
@@ -77,3 +93,38 @@ kind delete cluster --name kubernauts-staging
 ```
 
 Requires Docker, `kind`, and `kubectl`.
+
+## Suggestions
+
+### Rollback on failure (not implemented)
+
+Today `deploy-prod` applies the prod overlay and then smoke tests it. If the smoke test fails, the job goes red but the broken version stays live. A rollback step would close that gap. This is a design idea only and the workflow does not do it yet.
+
+How it would work:
+
+1. **Record the last good state** before changing anything, for example `kubectl rollout history deployment/web` or the current image and revision number.
+2. **Apply the new overlay and smoke test it**, as the job does now.
+3. **Add a step with `if: failure()`** that runs `kubectl rollout undo deployment/web`, then `kubectl rollout status` to confirm the previous ReplicaSet is healthy again.
+4. **Fail the job anyway.** The rollback restores service, but the run must still show red so the bad change is not mistaken for a success.
+
+Why it is worth doing:
+
+- **Shorter outages:** a bad deploy is reverted in seconds, without waiting for someone to notice and fix it by hand.
+- **Safer promotion:** it makes "test passed, so deploy" less risky, because staging cannot catch everything (real traffic, real data, prod-only config).
+- **Uses what Kubernetes already provides:** Deployments keep revision history, so `rollout undo` needs no extra tooling.
+
+Things to get right:
+
+- Verify the rollback itself with a smoke test, and alert loudly if it also fails.
+- Keep `revisionHistoryLimit` high enough that there is a previous revision to return to.
+- `rollout undo` only reverts the Deployment. Changes to other resources (a ConfigMap, a Service, a CRD) in the same apply are not undone, and may need to be reverted by re-applying the previous commit instead.
+- Never apply a rollback step blindly after a partial failure: check that the failure was in the new version and not in the cluster or runner.
+
+### Other ideas
+
+- **PR preview environments:** give each pull request its own namespace for review.
+- **Image build stage:** build and push an app image in CI, then promote the same tag from staging to prod.
+- **Policy checks:** fail PRs that run as root or lack resource limits (Kyverno or `kube-linter`).
+- **Drift detection:** a scheduled job that runs `kubectl diff` against prod and opens an issue on hand-made changes.
+- **Progressive delivery:** canary or blue-green releases with Argo Rollouts.
+- **Pin tool versions:** CI currently installs `kubeconform` at a fixed version but relies on the latest `helm/kind-action` major tag. Pinning actions to commit SHAs would harden the supply chain.
