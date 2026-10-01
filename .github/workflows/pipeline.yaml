@@ -7,9 +7,15 @@ on:
   # Production deploys are manual: Actions tab > pipeline > Run workflow
   workflow_dispatch:
 
+# The token only needs to read the repo; nothing here writes back to GitHub.
+permissions:
+  contents: read
+
 jobs:
   # 1. Check the code and prove it works on a throwaway cluster built from clusters/staging.yaml
   test:
+    # Owner-only: no one else can trigger runs, even if they are later given repo access.
+    if: github.actor == github.repository_owner
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +48,10 @@ jobs:
   # Needs a self-hosted runner on the machine that hosts the prod cluster.
   deploy-prod:
     needs: test
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: >-
+      github.actor == github.repository_owner &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main'
     runs-on: [self-hosted, windows]
     environment: production
     defaults:
