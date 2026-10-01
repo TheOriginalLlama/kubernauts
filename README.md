@@ -65,23 +65,42 @@ Because of this, `deploy-prod` needs the runner online and Docker Desktop runnin
 
 If production were a cloud cluster, a hosted runner could deploy to it and no self-hosted runner would be needed.
 
-## Access control: who can run the pipeline
+## Access control
 
-Only the repository owner can run the pipeline. This is enforced in three layers:
+### Follows the principle of least privilege
 
-1. **Repo access:** the repo is private and I am the only collaborator.
-2. **Owner check in the workflow:** both jobs carry `if: github.actor == github.repository_owner`. Anyone else who triggers a run, even if they are added to the repo later, gets skipped jobs.
-3. **Least-privilege token:** the workflow sets `permissions: contents: read`, and the repo's default workflow token is read-only, so a run cannot push code or change the repo.
+Every person, token, and job gets only the access it needs to do its work, and nothing more. In this pipeline that means:
 
-### Why permissions should be limited
+- **Read-only workflow token:** the workflow sets `permissions: contents: read`, and the repo's default workflow token is read-only. A run can read the code to test it, but it cannot push commits, create releases, or change repo settings.
+- **Nothing runs with more access than its job needs:** `test` only builds a disposable cluster on a GitHub VM, so it touches nothing of mine. Only `deploy-prod` is allowed near production.
 
-- **The self-hosted runner executes whatever the workflow says, as my Windows user.** Anyone who can run or edit a workflow can run commands on my machine, with access to my files, my Docker, and my other clusters. This is the main risk, and it is why the repo is private and the deploy job is owner-only. Never attach a self-hosted runner to a public repo, since any pull request could change the workflow.
-- **The deploy job changes production.** Starting it should be a deliberate act by one accountable person, not a side effect of someone else's push.
-- **Blast radius:** a compromised account or a malicious pull request can do only what its token allows. A read-only token plus an owner check keeps that small.
-- **Cost and abuse:** hosted-runner minutes are limited, and untrusted triggers can burn them or run unwanted workloads.
-- **Auditability:** one authorised actor makes it clear who ran what.
+### Why the deploy job should be limited
 
-If the project grows to include collaborators, relax this on purpose: keep `deploy-prod` owner-only (or behind a required-reviewer `production` environment), and let others run only `test`.
+Nobody should be able to push to production except the people who have been approved to do it.
+
+- **Production is real:** a change there affects the live environment, so starting a deploy should be a deliberate act by an approved person, not a side effect of someone else's push or pull request.
+- **The self-hosted runner is powerful:** it executes workflow code as my Windows user, with access to my files, my Docker, and my other clusters. Whoever can trigger the deploy job can run commands on that machine. For this reason the deploy job is manual-only, and a self-hosted runner must never be attached to a public repo, where any pull request could change the workflow.
+- **Smaller blast radius:** if an account is compromised or a pull request is malicious, the damage is limited to what that account or token is allowed to do.
+- **Accountability:** when only approvers can deploy, it is clear who ran what and when.
+- **Cost and abuse:** untrusted triggers can burn hosted-runner minutes or run unwanted workloads.
+
+The usual way to enforce this is a `production` [environment](https://docs.github.com/actions/deployment/targeting-different-environments/using-environments-for-deployment) with **required reviewers**, so the deploy job pauses until a named approver signs off. On private personal repos that feature needs GitHub Pro.
+
+### Giving each person only what they need: GitHub roles
+
+GitHub lets you assign each user a role that matches their job, so you can grant just enough permission. These roles are available on repositories owned by an **organization**:
+
+| Role | Intended for | Can do |
+|---|---|---|
+| Read | people who only view or discuss the project | view and clone the code, open issues and comments |
+| Triage | people who manage issues and pull requests | everything in Read, plus label, assign, and close issues and PRs (no code changes) |
+| Write | contributors | everything in Triage, plus push branches and merge pull requests |
+| Maintain | people who run the project | everything in Write, plus manage some repo settings (no destructive or sensitive ones) |
+| Admin | owners | full control: settings, access, secrets, and deleting the repo |
+
+Organizations can also define **custom roles** for finer control. Personal repositories are simpler: there is just the owner and collaborators, without these granular roles. To use roles, branch protection, and environment approvals together, move the repo into an organization.
+
+Typical setup for a team: most people get **Write** (they can open PRs and see test results), only a few approvers can run or approve the production deploy, and **Admin** stays with one or two owners. Roles are managed under Settings > Collaborators and teams. See [GitHub's repository roles documentation](https://docs.github.com/organizations/managing-user-access-to-your-organizations-repositories/managing-repository-roles/repository-roles-for-an-organization).
 
 ## Run locally
 
