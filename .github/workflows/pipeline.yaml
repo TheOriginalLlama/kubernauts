@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Production deploys are manual: Actions tab > pipeline > Run workflow
+  workflow_dispatch:
 
 jobs:
   # 1. Check the code and prove it works on a throwaway cluster built from clusters/staging.yaml
@@ -36,10 +38,11 @@ jobs:
       - name: Smoke test
         run: scripts/smoke-test.sh kind-kubernauts-staging
 
-  # 2. Promote the exact commit that passed to production
+  # 2. Promote the exact commit that passed to production (manual trigger only).
+  # Needs a self-hosted runner on the machine that hosts the prod cluster.
   deploy-prod:
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, windows]
     environment: production
     defaults:
